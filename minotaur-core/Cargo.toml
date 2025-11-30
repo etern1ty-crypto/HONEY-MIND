@@ -1,0 +1,14 @@
+[package]
+name = "minotaur-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+minotaur-net = { path = "../minotaur-net" }
+minotaur-eye = { path = "../minotaur-eye" }
+minotaur-brain = { path = "../minotaur-brain" }
+minotaur-trap = { path = "../minotaur-trap" }
+tokio = { version = "1.43", features = ["full"] }
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"

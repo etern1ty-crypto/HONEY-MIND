@@ -1,0 +1,12 @@
+[package]
+name = "minotaur-trap"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+candle-core = "0.8"
+candle-nn = "0.8"
+image = "0.24"
+anyhow = "1.0"
+rand = "0.8"
+log = "0.4"
