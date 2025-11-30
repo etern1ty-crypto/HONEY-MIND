@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "minotaur-core",
+    "minotaur-net",
+    "minotaur-eye",
+    "minotaur-trap",
+    "minotaur-brain",
+    "minotaur-net-ebpf", "xtask", "minotaur-eye-ebpf",
+]
+resolver = "2"

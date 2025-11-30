@@ -1,0 +1,11 @@
+D:\honey\HONEY-MIND\target\debug\deps\cargo_metadata-161af059553dcb7e.d: C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\lib.rs C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\dependency.rs C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\diagnostic.rs C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\errors.rs C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\messages.rs
+
+D:\honey\HONEY-MIND\target\debug\deps\libcargo_metadata-161af059553dcb7e.rlib: C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\lib.rs C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\dependency.rs C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\diagnostic.rs C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\errors.rs C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\messages.rs
+
+D:\honey\HONEY-MIND\target\debug\deps\libcargo_metadata-161af059553dcb7e.rmeta: C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\lib.rs C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\dependency.rs C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\diagnostic.rs C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\errors.rs C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\messages.rs
+
+C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\lib.rs:
+C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\dependency.rs:
+C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\diagnostic.rs:
+C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\errors.rs:
+C:\Users\sonik\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cargo_metadata-0.15.4\src\messages.rs:
