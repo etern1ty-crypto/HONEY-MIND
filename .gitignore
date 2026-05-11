@@ -18,3 +18,4 @@ target/
 *.log
 honeypot.jsonl
 honeypot-*.jsonl
+__pycache__/
