@@ -1,8 +1,7 @@
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:1a1b27,50:DEA584,100:1a1b27&height=200&section=header&text=HONEY-MIND&fontSize=50&fontColor=FFFFFF&fontAlignY=35&desc=minotaur%20%E2%80%94%20Low-Interaction%20TCP%20Honeypot%20in%20Rust&descSize=16&descColor=DEA584&descAlignY=55&animation=fadeIn" width="100%"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:1a1b27,50:DEA584,100:1a1b27&height=200&section=header&text=HONEY-MIND&fontSize=50&fontColor=FFFFFF&fontAlignY=35&desc=minotaur%20--%20Low-Interaction%20TCP%20Honeypot%20in%20Rust&descSize=16&descColor=DEA584&descAlignY=55&animation=fadeIn" width="100%"/>
 
 <div align="center">
 
-[![CI](https://github.com/etern1ty-crypto/HONEY-MIND/actions/workflows/ci.yml/badge.svg)](https://github.com/etern1ty-crypto/HONEY-MIND/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/rust-stable_(1.75+)-orange?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-29_passing-brightgreen?style=flat-square)]()
