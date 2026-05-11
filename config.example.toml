@@ -1,0 +1,60 @@
+# Example minotaur honeypot configuration.
+#
+# Run with:
+#   minotaur --config minotaur.toml run
+#
+# Validate with:
+#   minotaur --config minotaur.toml validate-config
+
+[logging]
+# JSONL output file. Use "-" or omit to log only to stdout.
+output = "honeypot.jsonl"
+# If true, each JSONL line is also written to stdout in addition to the file.
+stdout = false
+# Bounded channel buffer for the writer task. Records beyond this are dropped
+# and counted (minotaur_rejected_total{reason="logger_full"} - tracked in-process).
+buffer_size = 1024
+
+[metrics]
+# Set to true to expose a Prometheus /metrics endpoint.
+enabled = true
+bind = "127.0.0.1:9090"
+
+[server]
+# Maximum concurrent sessions across all endpoints. Excess connections are
+# immediately closed.
+max_concurrent_sessions = 1024
+# Per-session inactivity timeout in seconds. After this many seconds without
+# new bytes, the session is closed and logged.
+session_timeout_seconds = 60
+# Max new connections per source IP per 60-second window. 0 disables rate limit.
+rate_limit_per_ip_per_min = 120
+# Cap on bytes captured per session in the preview field. Bytes beyond this are
+# counted in bytes_received but not stored.
+max_bytes_per_session = 8192
+
+# ----- Endpoints -----
+
+[[endpoint]]
+bind = "0.0.0.0:2222"
+protocol = "ssh"
+banner = "SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u3"
+
+[[endpoint]]
+bind = "0.0.0.0:8080"
+protocol = "http"
+server_header = "nginx/1.18.0"
+http_status = 404
+
+[[endpoint]]
+bind = "0.0.0.0:2323"
+protocol = "telnet"
+banner = "Welcome to Ubuntu 22.04 LTS"
+login_prompt = "login: "
+
+[[endpoint]]
+# Generic capture: log everything sent to this port. Useful for unknown
+# scanners or as a wildcard catch-all on a port a known service uses.
+bind = "0.0.0.0:6379"
+protocol = "raw"
+banner = "-NOAUTH Authentication required.\r\n"
