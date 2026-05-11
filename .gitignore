@@ -13,3 +13,8 @@ target/
 *.swp
 .idea/
 .vscode/
+
+# Runtime artifacts emitted by minotaur
+*.log
+honeypot.jsonl
+honeypot-*.jsonl

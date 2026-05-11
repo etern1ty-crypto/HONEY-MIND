@@ -1,10 +1,44 @@
-[workspace]
-members = [
-    "minotaur-core",
-    "minotaur-net",
-    "minotaur-eye",
-    "minotaur-trap",
-    "minotaur-brain",
-    "minotaur-net-ebpf", "xtask", "minotaur-eye-ebpf",
-]
-resolver = "2"
+[package]
+name = "minotaur"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+description = "Low-interaction TCP honeypot with protocol emulation, JSONL logging, and Prometheus metrics."
+repository = "https://github.com/etern1ty-crypto/HONEY-MIND"
+readme = "README.md"
+keywords = ["honeypot", "security", "blueteam", "tcp"]
+categories = ["network-programming", "command-line-utilities"]
+
+[[bin]]
+name = "minotaur"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "signal", "sync", "fs"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+anyhow = "1"
+thiserror = "1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+hex = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+prometheus = "0.13"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full", "test-util"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
