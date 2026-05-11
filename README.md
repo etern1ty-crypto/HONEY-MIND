@@ -1,5 +1,9 @@
 # HONEY-MIND
 
+[![CI](https://github.com/etern1ty-crypto/HONEY-MIND/actions/workflows/ci.yml/badge.svg)](https://github.com/etern1ty-crypto/HONEY-MIND/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 `minotaur` — a low-interaction TCP honeypot in Rust. It listens on configured
 ports, emulates just enough protocol to make scanners commit (send banners,
 credentials, request paths), and writes structured JSONL session logs plus
@@ -194,7 +198,36 @@ Don't run this as root.
 - Shutdown uses `tokio-util` `CancellationToken`; all listener loops select
   on it and exit cleanly.
 
+## Example `/metrics` output
+
+After a handful of test connections:
+
+```
+# HELP minotaur_active_sessions Currently active honeypot sessions.
+# TYPE minotaur_active_sessions gauge
+minotaur_active_sessions 0
+# HELP minotaur_connections_total Total accepted connections, labelled by protocol.
+# TYPE minotaur_connections_total counter
+minotaur_connections_total{protocol="http"} 1
+minotaur_connections_total{protocol="raw"} 1
+minotaur_connections_total{protocol="ssh"} 1
+minotaur_connections_total{protocol="telnet"} 1
+# HELP minotaur_bytes_received_total Total bytes received from clients, labelled by protocol.
+# TYPE minotaur_bytes_received_total counter
+minotaur_bytes_received_total{protocol="http"} 94
+minotaur_bytes_received_total{protocol="raw"} 12
+minotaur_bytes_received_total{protocol="ssh"} 31
+minotaur_bytes_received_total{protocol="telnet"} 32
+# HELP minotaur_session_duration_seconds Distribution of session durations in seconds, labelled by protocol.
+# TYPE minotaur_session_duration_seconds histogram
+minotaur_session_duration_seconds_count{protocol="http"} 1
+minotaur_session_duration_seconds_count{protocol="ssh"} 1
+...
+```
+
 ## Testing
+
+Unit + integration suite:
 
 ```
 cargo test
@@ -204,6 +237,13 @@ Includes ~29 tests covering config parsing/validation, JSONL serialization,
 the rate limiter, the Prometheus exporter, each protocol's parser/handler,
 and end-to-end integration tests that bind to `127.0.0.1:0`, drive the
 real handlers over a real TCP socket, and assert on the resulting JSONL.
+
+A standalone smoke driver lives in [`examples/e2e/`](examples/e2e/) — it
+builds against the release binary, drives each of the four protocols over
+real sockets, exercises the IAC-stripping and single-TCP-segment
+`username + password` edge cases, and prints what the server sent back.
+Use it after a build to confirm the binary, JSONL writer, and `/metrics`
+exporter are wired together.
 
 ## License
 

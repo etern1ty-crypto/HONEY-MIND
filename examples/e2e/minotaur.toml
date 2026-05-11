@@ -1,0 +1,43 @@
+# Loopback-only test config for the E2E driver in this directory.
+#
+# Differences from ../../config.example.toml:
+#   - Binds all endpoints to 127.0.0.1 (never expose tests to the LAN).
+#   - Rate limit disabled so the driver isn't throttled when it hits four
+#     endpoints from one source IP in quick succession.
+
+[logging]
+output = "honeypot.jsonl"
+stdout = false
+buffer_size = 1024
+
+[metrics]
+enabled = true
+bind = "127.0.0.1:9090"
+
+[server]
+max_concurrent_sessions = 1024
+session_timeout_seconds = 60
+rate_limit_per_ip_per_min = 0
+max_bytes_per_session = 8192
+
+[[endpoint]]
+bind = "127.0.0.1:2222"
+protocol = "ssh"
+banner = "SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u3"
+
+[[endpoint]]
+bind = "127.0.0.1:8080"
+protocol = "http"
+server_header = "nginx/1.18.0"
+http_status = 404
+
+[[endpoint]]
+bind = "127.0.0.1:2323"
+protocol = "telnet"
+banner = "Welcome to Ubuntu 22.04 LTS"
+login_prompt = "login: "
+
+[[endpoint]]
+bind = "127.0.0.1:6379"
+protocol = "raw"
+banner = "-NOAUTH Authentication required.\r\n"
