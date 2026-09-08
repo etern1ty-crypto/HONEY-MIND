@@ -1,0 +1,39 @@
+[Unit]
+Description=HONEY-MIND internal-network deception sensor
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+DynamicUser=true
+StateDirectory=minotaur
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/minotaur
+Environment=RUST_LOG=minotaur=info
+ExecStartPre=/usr/local/bin/minotaur --config /etc/minotaur/minotaur.toml validate-config
+ExecStart=/usr/local/bin/minotaur --config /etc/minotaur/minotaur.toml run
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=25
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitNOFILE=4096
+TasksMax=128
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

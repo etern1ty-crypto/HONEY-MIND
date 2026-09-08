@@ -1,145 +1,215 @@
 #!/usr/bin/env python3
-"""End-to-end smoke driver for the minotaur honeypot.
+"""Bounded loopback smoke test. Uses only Python 3.11+ standard library.
 
-Spins up a TCP client against each protocol endpoint on the default
-example configuration (loopback only) and prints per-session
-transcripts.  After the run, inspect:
-
-    cat honeypot.jsonl | jq .
-    curl http://127.0.0.1:9090/metrics
-
-Run minotaur first in a separate terminal:
-
-    ./target/release/minotaur --config examples/e2e/minotaur.toml run
-
-then in another terminal:
-
-    python3 examples/e2e/drive.py
-
-No external dependencies beyond the Python standard library and
-``curl`` (for the HTTP probe).
+Manual mode attaches to examples/e2e/minotaur.toml. --binary launches a fresh
+sensor with ephemeral ports, reads its announced addresses, verifies JSONL
+stdout (including output='-'), then checks graceful SIGTERM on POSIX.
 """
 from __future__ import annotations
 
+import argparse
+import json
 import os
+import queue
+import re
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from pathlib import Path
 
-HOST = "127.0.0.1"
+
+class Peer:
+    def __init__(self, port: int) -> None:
+        self.socket = socket.create_connection(("127.0.0.1", port), timeout=3)
+        self.pending = bytearray()
+
+    def __enter__(self) -> Peer:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.socket.close()
+
+    def send(self, payload: bytes) -> None:
+        self.socket.sendall(payload)
+
+    def until(self, marker: bytes) -> bytes:
+        deadline = time.monotonic() + 4
+        while marker not in self.pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"deadline waiting for {marker!r}")
+            self.socket.settimeout(remaining)
+            chunk = self.socket.recv(4096)
+            if not chunk:
+                raise RuntimeError(f"EOF before {marker!r}")
+            self.pending.extend(chunk)
+            if len(self.pending) > 32768:
+                raise RuntimeError("response exceeds smoke-test budget")
+        end = self.pending.index(marker) + len(marker)
+        result = bytes(self.pending[:end])
+        del self.pending[:end]
+        return result
+
+    def eof(self) -> bytes:
+        deadline = time.monotonic() + 5
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("deadline waiting for EOF")
+            self.socket.settimeout(remaining)
+            chunk = self.socket.recv(4096)
+            if not chunk:
+                return bytes(self.pending)
+            self.pending.extend(chunk)
+            if len(self.pending) > 262144:
+                raise RuntimeError("response exceeds smoke-test budget")
 
 
-def recv_until(sock: socket.socket, marker: bytes, max_wait: float = 3.0) -> bytes:
-    sock.settimeout(max_wait)
-    buf = b""
-    deadline = time.monotonic() + max_wait
-    while marker not in buf and time.monotonic() < deadline:
+def probe(ports: dict[str, int]) -> None:
+    with Peer(ports["ssh"]) as peer:
+        assert peer.until(b"\r\n").startswith(b"SSH-2.0-")
+        peer.send(b"SSH-2.0-HoneyMindSmoke\r\n")
+        peer.socket.shutdown(socket.SHUT_WR)
+        peer.eof()
+    with Peer(ports["http"]) as peer:
+        peer.send(b"HEAD /admin?token=smoke-secret HTTP/1.1\r\nHost: smoke.local\r\n\r\n")
+        response = peer.eof()
+        assert response.startswith(b"HTTP/1.1 404 "), response
+        assert response.endswith(b"\r\n\r\n"), "HEAD incorrectly returned a body"
+    with Peer(ports["telnet"]) as peer:
+        peer.until(b"login: ")
+        peer.send(b"\xff\xfa\x18term\nvalue\xff\xf0root\r\nsmoke-secret\r\nadmin\r\nsmoke-secret\r\nuser\r\nsmoke-secret\r\n")
+        assert b"Too many attempts" in peer.eof()
+    with Peer(ports["raw"]) as peer:
+        peer.send(b"PING\r\nINFO\r\n")
+        peer.socket.shutdown(socket.SHUT_WR)
+        peer.eof()
+    with Peer(ports["metrics"]) as peer:
+        peer.send(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        response = peer.eof()
+        assert b"minotaur_connections_total" in response
+        assert b"sensor_id=" in response
+
+
+def pump(stream: object, destination: queue.Queue[str]) -> None:
+    try:
+        for line in stream:
+            destination.put(line)
+    finally:
+        stream.close()
+
+
+def launched(binary: Path) -> None:
+    if os.name != "posix":
+        raise RuntimeError("launched SIGTERM smoke requires POSIX; use cargo tests on other platforms")
+    with tempfile.TemporaryDirectory(prefix="honeymind-smoke-") as directory:
+        config = Path(directory) / "minotaur.toml"
+        config.write_text(
+            "[sensor]\nid='smoke'\nenvironment='test'\n"
+            "[logging]\noutput='-'\nstdout=false\n"
+            "[metrics]\nenabled=true\nbind='127.0.0.1:0'\n"
+            "[server]\nrate_limit_per_ip_per_min=0\nsession_timeout_seconds=3\nmax_session_duration_seconds=10\n"
+            + "".join(f"[[endpoint]]\nbind='127.0.0.1:0'\nprotocol='{protocol}'\n" for protocol in ("ssh", "http", "telnet", "raw")),
+            encoding="utf-8",
+        )
+        environment = dict(os.environ)
+        environment["RUST_LOG"] = "minotaur=info"
+        child = subprocess.Popen(
+            [str(binary.resolve()), "-c", str(config), "run"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+            env=environment, bufsize=1,
+        )
+        assert child.stdout is not None and child.stderr is not None
+        stdout: queue.Queue[str] = queue.Queue()
+        stderr: queue.Queue[str] = queue.Queue()
+        threads = [
+            threading.Thread(target=pump, args=(child.stdout, stdout), daemon=True),
+            threading.Thread(target=pump, args=(child.stderr, stderr), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        diagnostics: list[str] = []
         try:
-            chunk = sock.recv(4096)
-        except socket.timeout:
-            break
-        if not chunk:
-            break
-        buf += chunk
-    return buf
-
-
-def recv_for(sock: socket.socket, duration: float) -> bytes:
-    sock.settimeout(duration)
-    buf = b""
-    deadline = time.monotonic() + duration
-    while time.monotonic() < deadline:
-        try:
-            chunk = sock.recv(4096)
-        except socket.timeout:
-            break
-        if not chunk:
-            break
-        buf += chunk
-    return buf
-
-
-def banner(name: str) -> None:
-    print(f"\n=== {name} ===", flush=True)
-
-
-def drive_ssh() -> None:
-    banner("SSH @ 127.0.0.1:2222")
-    s = socket.create_connection((HOST, 2222), timeout=3)
-    server_banner = recv_until(s, b"\n", 2.0)
-    print(f"server banner:  {server_banner!r}")
-    s.sendall(b"SSH-2.0-paramiko-test\r\n")
-    s.sendall(bytes([0x01, 0x02, 0x03, 0x04, 0xAA, 0xBB, 0xCC, 0xDD]))
-    time.sleep(0.5)
-    s.close()
-    print("client banner sent + 8 random bytes; closed")
-
-
-def drive_http() -> None:
-    banner("HTTP @ 127.0.0.1:8080")
-    out = subprocess.run(
-        [
-            "curl", "-sS", "-D-",
-            "-o", "/dev/null",
-            "-A", "honeymind-test/1.0",
-            "-H", "Host: trap.local",
-            "http://127.0.0.1:8080/admin?probe=1",
-        ],
-        capture_output=True, text=True, timeout=5,
-    )
-    print(out.stdout.strip())
-    if out.stderr:
-        print(f"curl stderr: {out.stderr.strip()}")
-
-
-def drive_telnet() -> None:
-    banner("TELNET @ 127.0.0.1:2323")
-    s = socket.create_connection((HOST, 2323), timeout=3)
-    head = recv_until(s, b"login: ", 2.0)
-    print(f"banner+prompt:  {head!r}")
-    # Attempt 1: username prefixed with IAC WILL TERMINAL_TYPE to verify stripping.
-    s.sendall(b"\xff\xfb\x18root\r\n")
-    print("sent username:  b'\\xff\\xfb\\x18root\\r\\n' (IAC-prefixed)")
-    pw_prompt = recv_until(s, b"Password: ", 2.0)
-    print(f"password prompt: {pw_prompt!r}")
-    s.sendall(b"12345\r\n")
-    incorrect = recv_until(s, b"Login incorrect\r\n", 2.0)
-    print(f"server reply:   {incorrect!r}")
-    recv_until(s, b"login: ", 2.0)
-    # Attempt 2: username + password in ONE TCP segment (single sendall).
-    s.sendall(b"admin\r\nhunter2\r\n")
-    print("sent username+password in a single TCP segment")
-    print(f"server tail:    {recv_for(s, 0.8)!r}")
-    s.close()
-
-
-def drive_raw() -> None:
-    banner("RAW @ 127.0.0.1:6379")
-    s = socket.create_connection((HOST, 6379), timeout=3)
-    srv_banner = recv_until(s, b"\n", 2.0)
-    print(f"server banner:  {srv_banner!r}")
-    s.sendall(b"PING\r\nINFO\r\n")
-    print("sent 12 bytes: PING\\r\\nINFO\\r\\n")
-    time.sleep(0.2)
-    s.close()
+            ports: dict[str, int] = {}
+            deadline = time.monotonic() + 10
+            while len(ports) < 5:
+                if child.poll() is not None:
+                    raise RuntimeError("sensor exited during startup: " + "".join(diagnostics))
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("sensor did not announce all listeners")
+                try:
+                    line = stderr.get(timeout=min(remaining, 0.2))
+                except queue.Empty:
+                    continue
+                diagnostics.append(line)
+                address = re.search(r"bind=127\.0\.0\.1:(\d+)", line)
+                if not address:
+                    continue
+                if "management listening" in line:
+                    ports["metrics"] = int(address[1])
+                elif "endpoint listening" in line:
+                    protocol = re.search(r"protocol=\"?(ssh|http|telnet|raw)\"?", line)
+                    if protocol:
+                        ports[protocol[1]] = int(address[1])
+            probe(ports)
+            records: list[dict] = []
+            deadline = time.monotonic() + 6
+            while len(records) < 4:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("stdout JSONL records were lost")
+                records.append(json.loads(stdout.get(timeout=remaining)))
+            assert {record["protocol"] for record in records} == {"ssh", "http", "telnet", "raw"}
+            for record in records:
+                assert record["schema_version"] == 2
+                assert record["sensor"]["id"] == "smoke"
+                assert record["data_preview_hex"] == ""
+                assert "smoke-secret" not in json.dumps(record)
+                assert record["dst_port"] == ports[record["protocol"]]
+            raw = next(record for record in records if record["protocol"] == "raw")
+            assert raw["bytes_received"] == 12
+            telnet = next(record for record in records if record["protocol"] == "telnet")
+            assert len(telnet["events"]) == 3
+            # Keep one admitted session alive; SIGTERM must log its shutdown.
+            with Peer(ports["ssh"]) as peer:
+                peer.until(b"\r\n")
+                child.send_signal(signal.SIGTERM)
+                assert child.wait(timeout=15) == 0, "graceful shutdown failed"
+            for thread in threads:
+                thread.join(timeout=2)
+            tail = []
+            while not stdout.empty():
+                tail.append(json.loads(stdout.get_nowait()))
+            assert len(tail) == 1 and tail[0]["close_reason"] == "shutdown", tail
+            print("PASS: all protocols, metrics, stdout privacy and SIGTERM drain")
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+            for thread in threads:
+                thread.join(timeout=2)
 
 
 def main() -> int:
-    print("Driving minotaur on 127.0.0.1 (2222 / 8080 / 2323 / 6379).")
-    print("If a connection fails, ensure minotaur is running with examples/e2e/minotaur.toml.")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, help="launch this binary with an isolated temporary config")
+    args = parser.parse_args()
     try:
-        drive_ssh()
-        drive_http()
-        drive_telnet()
-        drive_raw()
-    except (ConnectionRefusedError, socket.timeout) as e:
-        print(f"\nERROR: could not reach minotaur: {e}", file=sys.stderr)
+        if args.binary:
+            launched(args.binary)
+        else:
+            probe({"ssh": 2222, "http": 8080, "telnet": 2323, "raw": 6379, "metrics": 9090})
+            print("PASS: protocol/metrics probes; inspect examples/e2e/honeypot.jsonl for records")
+        return 0
+    except (OSError, RuntimeError, AssertionError, TimeoutError, ValueError, queue.Empty, subprocess.TimeoutExpired) as error:
+        print(f"FAIL: {error}", file=sys.stderr)
         return 1
-    print("\nDone. Now inspect honeypot.jsonl (4 records) and /metrics.")
-    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

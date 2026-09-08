@@ -1,0 +1,41 @@
+{
+  "validator": "Ajv2020 + ajv-formats",
+  "status": "passed",
+  "checks": [
+    {
+      "name": "synthetic HTTP record",
+      "passed": true,
+      "actual_valid": true
+    },
+    {
+      "name": "unknown schema version rejected",
+      "passed": true,
+      "actual_valid": false
+    },
+    {
+      "name": "raw payload in metadata mode rejected",
+      "passed": true,
+      "actual_valid": false
+    },
+    {
+      "name": "unknown property rejected",
+      "passed": true,
+      "actual_valid": false
+    },
+    {
+      "name": "oversize event list rejected",
+      "passed": true,
+      "actual_valid": false
+    },
+    {
+      "name": "incomplete event rejected",
+      "passed": true,
+      "actual_valid": false
+    },
+    {
+      "name": "valid redacted Telnet record",
+      "passed": true,
+      "actual_valid": true
+    }
+  ]
+}

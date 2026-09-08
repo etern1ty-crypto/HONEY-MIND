@@ -1,78 +1,82 @@
-//! Minimal SSH banner handler.
-//!
-//! We do NOT implement the SSH transport layer (no KEX, no encryption). The
-//! handler sends a server identification string per RFC 4253 §4.2, then reads
-//! the client's identification string and continues capturing raw bytes until
-//! close/timeout. This is sufficient to:
-//!   - log which clients connect (banner string is often unique per
-//!     scanner/library: `libssh_0.9.6`, `paramiko-2.10`, `Go`, etc.)
-//!   - count SSH-port scans
-//!   - capture any post-banner payload (won't be valid SSH, but bytes are
-//!     still interesting)
-
-use std::time::Duration;
-
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
+//! RFC 4253 identification only: deliberately no KEX, authentication or shell.
 
 use crate::config::EndpointConfig;
 use crate::session::{CloseReason, SessionEvent, SessionState};
 
-use super::read_with_timeout;
+use super::SessionIo;
 
-const DEFAULT_BANNER: &str = "SSH-2.0-OpenSSH_8.4p1 Debian-5+deb11u3";
-/// Per RFC 4253 §4.2, the identification string is at most 255 bytes
-/// including the trailing CR LF.
-const MAX_CLIENT_BANNER: usize = 255;
+const DEFAULT_BANNER: &str = "SSH-2.0-OpenSSH_9.6";
+const MAX_IDENTIFICATION_BYTES: usize = 255;
 
 pub async fn handle(
-    mut stream: TcpStream,
+    io: &mut SessionIo,
     state: &mut SessionState,
     ep: &EndpointConfig,
-    session_timeout: Duration,
 ) -> CloseReason {
-    let banner = ep.banner.as_deref().unwrap_or(DEFAULT_BANNER);
-    if stream
-        .write_all(format!("{}\r\n", banner.trim_end()).as_bytes())
-        .await
-        .is_err()
-    {
-        return CloseReason::Error;
+    let banner = format!("{}\r\n", ep.banner.as_deref().unwrap_or(DEFAULT_BANNER));
+    if let Err(reason) = io.write(banner.as_bytes()).await {
+        return reason;
     }
-    if stream.flush().await.is_err() {
-        return CloseReason::Error;
-    }
-
-    let mut buf = [0u8; 4096];
-    let mut client_banner: Option<String> = None;
-    let mut header = Vec::with_capacity(MAX_CLIENT_BANNER);
-
+    let mut buffer = [0u8; 4096];
+    let mut identification = Vec::with_capacity(MAX_IDENTIFICATION_BYTES);
+    let mut identified = false;
     loop {
-        match read_with_timeout(&mut stream, &mut buf, session_timeout).await {
-            Ok(None) => return CloseReason::ClientClosed,
+        match io.read(state, &mut buffer).await {
+            Ok(None) => {
+                if !identified && !identification.is_empty() {
+                    state.notice("ssh_incomplete_identification");
+                }
+                return CloseReason::ClientClosed;
+            }
             Ok(Some(n)) => {
-                let chunk = &buf[..n];
-                state.record_bytes(chunk);
-
-                if client_banner.is_none() {
-                    let want = MAX_CLIENT_BANNER
-                        .saturating_sub(header.len())
-                        .min(chunk.len());
-                    header.extend_from_slice(&chunk[..want]);
-                    if let Some(idx) = header.iter().position(|&b| b == b'\n') {
-                        let line = &header[..idx];
+                if identified {
+                    continue;
+                }
+                for &byte in &buffer[..n] {
+                    identification.push(byte);
+                    if byte == b'\n' {
+                        let line = identification
+                            .strip_suffix(b"\n")
+                            .unwrap_or(&identification);
                         let line = line.strip_suffix(b"\r").unwrap_or(line);
-                        let banner_str = String::from_utf8_lossy(line).into_owned();
+                        if !valid_identification(line) {
+                            state.notice("ssh_invalid_identification");
+                            return CloseReason::ProtocolError;
+                        }
                         state.push_event(SessionEvent::SshClientBanner {
-                            banner: banner_str.clone(),
+                            banner: String::from_utf8_lossy(line).into_owned(),
                         });
-                        client_banner = Some(banner_str);
-                    } else if header.len() >= MAX_CLIENT_BANNER {
-                        client_banner = Some(String::new());
+                        identified = true;
+                        break;
+                    }
+                    if identification.len() >= MAX_IDENTIFICATION_BYTES {
+                        state.notice("ssh_identification_too_long");
+                        return CloseReason::ProtocolError;
                     }
                 }
             }
             Err(reason) => return reason,
         }
+    }
+}
+
+fn valid_identification(line: &[u8]) -> bool {
+    let software = line
+        .strip_prefix(b"SSH-2.0-")
+        .or_else(|| line.strip_prefix(b"SSH-1.99-"));
+    software.is_some_and(|value| !value.is_empty() && value[0] != b' ')
+        && line.iter().all(|b| (0x20..=0x7e).contains(b))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identification_is_not_arbitrary_first_line() {
+        assert!(valid_identification(b"SSH-2.0-Client_1.0 comment"));
+        assert!(!valid_identification(b"GET / HTTP/1.1"));
+        assert!(!valid_identification(b"SSH-2.0-test\0"));
+        assert!(!valid_identification(b"SSH-2.0-"));
     }
 }

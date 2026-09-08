@@ -1,185 +1,213 @@
-//! Telnet login-prompt honeypot.
-//!
-//! Sends an optional banner, then a `login:` prompt, captures the username
-//! line, prompts for a password, captures it. Mirrors the classic
-//! low-interaction telnet honeypot behaviour used in IoT-scanner research.
-//!
-//! Telnet IAC (`0xff`) negotiation bytes are stripped from captured input so
-//! the logged username/password are clean.
+//! Stateful Telnet negotiation stripping and bounded login dialogue.
 
-use std::time::Duration;
-
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
+use std::collections::VecDeque;
 
 use crate::config::EndpointConfig;
 use crate::session::{CloseReason, SessionEvent, SessionState};
 
-use super::read_with_timeout;
+use super::SessionIo;
 
-/// Cap on bytes per line. Real scanners send short usernames.
 const MAX_LINE: usize = 256;
-/// Cap on attempts before we drop the connection.
-const MAX_ATTEMPTS: u32 = 3;
+const MAX_ATTEMPTS: usize = 3;
 
 pub async fn handle(
-    mut stream: TcpStream,
+    io: &mut SessionIo,
     state: &mut SessionState,
     ep: &EndpointConfig,
-    session_timeout: Duration,
 ) -> CloseReason {
-    if let Some(banner) = ep.banner.as_deref() {
-        if stream.write_all(banner.as_bytes()).await.is_err() {
-            return CloseReason::Error;
-        }
-        if !banner.ends_with('\n') {
-            let _ = stream.write_all(b"\r\n").await;
+    if let Some(banner) = &ep.banner {
+        let banner = if banner.ends_with('\n') {
+            banner.clone()
+        } else {
+            format!("{banner}\r\n")
+        };
+        if let Err(reason) = io.write(banner.as_bytes()).await {
+            return reason;
         }
     }
-
     let prompt = ep.login_prompt.as_deref().unwrap_or("login: ");
-    // Persistent buffer: a single recv() can deliver both username and password
-    // (e.g. when a scanner sends them in one TCP segment), so we keep leftover
-    // bytes between read_line calls instead of discarding them.
-    let mut buffer: Vec<u8> = Vec::with_capacity(128);
-
+    let mut reader = LineReader::default();
     for _ in 0..MAX_ATTEMPTS {
-        if stream.write_all(prompt.as_bytes()).await.is_err() {
-            return CloseReason::Error;
+        if let Err(reason) = io.write(prompt.as_bytes()).await {
+            return reason;
         }
-        let _ = stream.flush().await;
-
-        let line = match read_line(&mut stream, state, &mut buffer, session_timeout).await {
-            ReadLineResult::Line(l) => l,
-            ReadLineResult::Closed => return CloseReason::ClientClosed,
-            ReadLineResult::Reason(r) => return r,
+        let username = match reader.read_line(io, state).await {
+            Ok(Some(value)) => String::from_utf8_lossy(&value).into_owned(),
+            Ok(None) => return CloseReason::ClientClosed,
+            Err(reason) => return reason,
         };
-        let username = String::from_utf8_lossy(&strip_telnet(&line))
-            .trim()
-            .to_string();
         if username.is_empty() {
             continue;
         }
-
-        if stream.write_all(b"Password: ").await.is_err() {
-            return CloseReason::Error;
+        if let Err(reason) = io.write(b"Password: ").await {
+            login(state, username, None);
+            return reason;
         }
-        let _ = stream.flush().await;
-
-        let password = match read_line(&mut stream, state, &mut buffer, session_timeout).await {
-            ReadLineResult::Line(l) => {
-                let s = String::from_utf8_lossy(&strip_telnet(&l))
-                    .trim()
-                    .to_string();
-                if s.is_empty() {
-                    None
-                } else {
-                    Some(s)
-                }
+        let password = match reader.read_line(io, state).await {
+            Ok(Some(value)) => Some(String::from_utf8_lossy(&value).into_owned()),
+            Ok(None) => {
+                login(state, username, None);
+                return CloseReason::ClientClosed;
             }
-            ReadLineResult::Closed => None,
-            ReadLineResult::Reason(r) => {
-                state.push_event(SessionEvent::TelnetLogin {
-                    username,
-                    password: None,
-                });
-                return r;
+            Err(reason) => {
+                login(state, username, None);
+                return reason;
             }
         };
-
-        state.push_event(SessionEvent::TelnetLogin { username, password });
-
-        let _ = stream.write_all(b"Login incorrect\r\n").await;
-    }
-
-    let _ = stream
-        .write_all(b"Too many attempts. Disconnecting.\r\n")
-        .await;
-    CloseReason::ServerClosed
-}
-
-enum ReadLineResult {
-    Line(Vec<u8>),
-    Closed,
-    Reason(CloseReason),
-}
-
-async fn read_line(
-    stream: &mut TcpStream,
-    state: &mut SessionState,
-    buffer: &mut Vec<u8>,
-    session_timeout: Duration,
-) -> ReadLineResult {
-    // If a previous call already buffered bytes past a newline, try to satisfy
-    // this read entirely from the buffer first.
-    if let Some(idx) = buffer.iter().position(|&b| b == b'\n') {
-        let line = buffer.drain(..=idx).take(idx).collect::<Vec<u8>>();
-        return ReadLineResult::Line(line);
-    }
-    let mut buf = [0u8; 256];
-    loop {
-        match read_with_timeout(stream, &mut buf, session_timeout).await {
-            Ok(None) => return ReadLineResult::Closed,
-            Ok(Some(n)) => {
-                let chunk = &buf[..n];
-                state.record_bytes(chunk);
-                buffer.extend_from_slice(chunk);
-                if let Some(idx) = buffer.iter().position(|&b| b == b'\n') {
-                    let line = buffer.drain(..=idx).take(idx).collect::<Vec<u8>>();
-                    return ReadLineResult::Line(line);
-                }
-                if buffer.len() >= MAX_LINE {
-                    let line = std::mem::take(buffer);
-                    return ReadLineResult::Line(line);
-                }
-            }
-            Err(reason) => return ReadLineResult::Reason(reason),
+        login(state, username, password);
+        if let Err(reason) = io.write(b"Login incorrect\r\n").await {
+            return reason;
         }
     }
+    match io.write(b"Too many attempts. Disconnecting.\r\n").await {
+        Ok(()) => CloseReason::ServerClosed,
+        Err(reason) => reason,
+    }
 }
 
-/// Strip RFC 854 IAC sequences (`0xFF <cmd> [<opt>]`) and trailing CR.
-fn strip_telnet(input: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(input.len());
-    let mut i = 0;
-    while i < input.len() {
-        let b = input[i];
-        if b == 0xff {
-            // IAC <command>; commands 251–254 (WILL/WONT/DO/DONT) carry an
-            // option byte. Skip 2 bytes for those; otherwise skip 2 bytes
-            // (IAC + command).
-            i += 2;
-            if i <= input.len() && i >= 2 {
-                let cmd = input.get(i - 1).copied().unwrap_or(0);
-                if matches!(cmd, 0xfb..=0xfe) {
-                    i += 1;
+fn login(state: &mut SessionState, username: String, password: Option<String>) {
+    state.push_event(SessionEvent::TelnetLogin {
+        username,
+        password,
+        credentials_redacted: false,
+    });
+}
+
+#[derive(Default)]
+struct LineReader {
+    pending: VecDeque<u8>,
+    decoder: TelnetDecoder,
+    line: Vec<u8>,
+    pending_cr: bool,
+}
+
+impl LineReader {
+    async fn read_line(
+        &mut self,
+        io: &mut SessionIo,
+        state: &mut SessionState,
+    ) -> Result<Option<Vec<u8>>, CloseReason> {
+        let mut buffer = [0u8; 256];
+        loop {
+            while let Some(byte) = self.pending.pop_front() {
+                let Some(byte) = self.decoder.feed(byte) else {
+                    continue;
+                };
+                if self.pending_cr {
+                    self.pending_cr = false;
+                    if byte == b'\n' {
+                        return Ok(Some(std::mem::take(&mut self.line)));
+                    }
+                    self.append(b'\r', state)?;
+                    // NVT CR NUL is a literal CR, not a credential boundary.
+                    if byte == 0 {
+                        continue;
+                    }
+                }
+                match byte {
+                    b'\r' => self.pending_cr = true,
+                    b'\n' => return Ok(Some(std::mem::take(&mut self.line))),
+                    byte => self.append(byte, state)?,
                 }
             }
-            continue;
+            match io.read(state, &mut buffer).await? {
+                None => {
+                    if !self.line.is_empty() || self.pending_cr {
+                        state.notice("telnet_incomplete_line");
+                    }
+                    return Ok(None);
+                }
+                Some(n) => self.pending.extend(&buffer[..n]),
+            }
         }
-        if b == b'\r' {
-            i += 1;
-            continue;
-        }
-        out.push(b);
-        i += 1;
     }
-    out
+
+    fn append(&mut self, byte: u8, state: &mut SessionState) -> Result<(), CloseReason> {
+        if self.line.len() >= MAX_LINE {
+            state.notice("telnet_line_too_long");
+            return Err(CloseReason::ProtocolError);
+        }
+        self.line.push(byte);
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct TelnetDecoder {
+    state: DecodeState,
+}
+
+#[derive(Clone, Copy, Default)]
+enum DecodeState {
+    #[default]
+    Data,
+    Iac,
+    Option,
+    Subnegotiation,
+    SubnegotiationIac,
+}
+
+impl TelnetDecoder {
+    /// Keeps state across read boundaries. Negotiation contents never become lines.
+    fn feed(&mut self, byte: u8) -> Option<u8> {
+        use DecodeState::*;
+        match self.state {
+            Data if byte == 255 => self.state = Iac,
+            Data => return Some(byte),
+            Iac => match byte {
+                255 => {
+                    self.state = Data;
+                    return Some(255);
+                }
+                251..=254 => self.state = Option,
+                250 => self.state = Subnegotiation,
+                _ => self.state = Data,
+            },
+            Option => self.state = Data,
+            Subnegotiation if byte == 255 => self.state = SubnegotiationIac,
+            Subnegotiation => {}
+            SubnegotiationIac => self.state = if byte == 240 { Data } else { Subnegotiation },
+        }
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn strip_telnet_removes_iac() {
-        let input = b"\xff\xfb\x01admin\r\n";
-        let cleaned = strip_telnet(input);
-        assert_eq!(cleaned, b"admin\n");
+    fn decode(chunks: &[&[u8]]) -> Vec<u8> {
+        let mut decoder = TelnetDecoder::default();
+        chunks
+            .iter()
+            .flat_map(|chunk| chunk.iter())
+            .filter_map(|b| decoder.feed(*b))
+            .collect()
     }
 
     #[test]
-    fn strip_telnet_keeps_plain() {
-        assert_eq!(strip_telnet(b"hello\n"), b"hello\n");
+    fn strips_fragmented_option_negotiation() {
+        assert_eq!(
+            decode(&[b"\xff", b"\xfb", b"\x01ad", b"min\r\n"]),
+            b"admin\r\n"
+        );
+    }
+
+    #[test]
+    fn strips_subnegotiation_including_embedded_newlines() {
+        assert_eq!(
+            decode(&[b"\xff\xfa\x18term\n", b"type\xff", b"\xf0root\n"]),
+            b"root\n"
+        );
+    }
+
+    #[test]
+    fn escaped_iac_is_data_not_a_command() {
+        assert_eq!(decode(&[b"ab\xff", b"\xffcd\n"]), b"ab\xffcd\n");
+    }
+
+    #[test]
+    fn does_not_strip_ordinary_bytes() {
+        assert_eq!(decode(&[b"user name\r\n"]), b"user name\r\n");
     }
 }

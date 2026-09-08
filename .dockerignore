@@ -1,0 +1,8 @@
+target
+.git
+*.zip
+*.jsonl
+*.jsonl.*
+.env
+minotaur.toml
+__pycache__

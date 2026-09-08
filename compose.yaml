@@ -1,0 +1,29 @@
+services:
+  sensor:
+    build: .
+    image: honey-mind:0.2.0
+    restart: unless-stopped
+    read_only: true
+    init: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 512m
+    stop_grace_period: 25s
+    environment:
+      RUST_LOG: minotaur=info
+    volumes:
+      - ./deploy/container.toml:/etc/minotaur/minotaur.toml:ro
+    # Safe local publishing. Widen ONLY decoy ports on an authorised isolated host.
+    ports:
+      - "127.0.0.1:2222:2222"
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:2323:2323"
+      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:9090:9090"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

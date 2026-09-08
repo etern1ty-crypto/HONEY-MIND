@@ -1,35 +1,25 @@
-//! Generic raw-TCP capture: optional banner, then read bytes until close or
-//! timeout. Used for ports where you don't want any protocol fidelity, just
-//! want to see what scanners throw at it.
-
-use std::time::Duration;
-
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
+//! Optional fixed banner, then bounded capture. No commands are executed.
 
 use crate::config::EndpointConfig;
 use crate::session::{CloseReason, SessionState};
 
-use super::read_with_timeout;
+use super::SessionIo;
 
 pub async fn handle(
-    mut stream: TcpStream,
+    io: &mut SessionIo,
     state: &mut SessionState,
     ep: &EndpointConfig,
-    session_timeout: Duration,
 ) -> CloseReason {
-    if let Some(banner) = ep.banner.as_deref() {
-        if stream.write_all(banner.as_bytes()).await.is_err() {
-            return CloseReason::Error;
+    if let Some(banner) = &ep.banner {
+        if let Err(reason) = io.write(banner.as_bytes()).await {
+            return reason;
         }
-        let _ = stream.flush().await;
     }
-
-    let mut buf = [0u8; 4096];
+    let mut buffer = [0u8; 4096];
     loop {
-        match read_with_timeout(&mut stream, &mut buf, session_timeout).await {
+        match io.read(state, &mut buffer).await {
             Ok(None) => return CloseReason::ClientClosed,
-            Ok(Some(n)) => state.record_bytes(&buf[..n]),
+            Ok(Some(_)) => {}
             Err(reason) => return reason,
         }
     }

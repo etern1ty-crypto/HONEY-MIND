@@ -1,0 +1,43 @@
+groups:
+  - name: minotaur
+    rules:
+      - alert: MinotaurDecoyTouched
+        expr: sum by (sensor_id, environment) (increase(minotaur_connections_total{environment="production"}[5m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unexpected connection to decoy {{ $labels.sensor_id }}"
+          description: "Inspect the sensor JSONL and validate approved scanner activity; this signal alone is not proof of compromise."
+      - alert: MinotaurTelemetryDropped
+        expr: sum by (sensor_id, environment) (increase(minotaur_logger_dropped_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Telemetry loss on {{ $labels.sensor_id }}"
+          description: "Inspect disk, stdout collector and queue capacity. Lost records cannot be recovered from metrics."
+      - alert: MinotaurAdmissionPressure
+        expr: sum by (sensor_id, environment) (increase(minotaur_rejected_total{reason!="ignored_ip"}[5m])) > 20
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Admission limits reached on {{ $labels.sensor_id }}"
+          description: "Check scan volume and resource budgets before raising limits."
+      - alert: MinotaurNotReady
+        expr: minotaur_ready == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sensor {{ $labels.sensor_id }} is not ready"
+          description: "Check startup errors and writer health."
+      - alert: MinotaurDown
+        expr: up{job="minotaur"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Minotaur management endpoint is unreachable"
+          description: "A failed writer stops the process. Check service logs, network access and storage."

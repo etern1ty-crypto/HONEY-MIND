@@ -1,0 +1,291 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HONEY-MIND session record v2",
+  "description": "Contract of normal CLI/server output. Addresses are serialized SocketAddr strings.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "session_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sensor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "environment": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "tags": {
+          "type": "object",
+          "maxProperties": 8,
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      },
+      "required": [
+        "id",
+        "environment",
+        "tags"
+      ]
+    },
+    "endpoint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "protocol": {
+      "enum": [
+        "raw",
+        "ssh",
+        "http",
+        "telnet"
+      ]
+    },
+    "src": {
+      "type": "string"
+    },
+    "dst": {
+      "type": "string"
+    },
+    "dst_port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytes_received": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "payload_captured": {
+      "type": "boolean"
+    },
+    "bytes_truncated": {
+      "type": "boolean"
+    },
+    "data_preview_hex": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{2})*$",
+      "maxLength": 131072
+    },
+    "data_preview_ascii": {
+      "type": "string",
+      "pattern": "^[ -~]*$",
+      "maxLength": 65536
+    },
+    "privacy_mode": {
+      "enum": [
+        "metadata",
+        "full"
+      ]
+    },
+    "events": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "ssh_client_banner"
+              },
+              "banner": {
+                "type": "string",
+                "maxLength": 254
+              }
+            },
+            "required": [
+              "type",
+              "banner"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "http_request"
+              },
+              "method": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32
+              },
+              "path": {
+                "type": "string",
+                "maxLength": 8192
+              },
+              "version": {
+                "enum": [
+                  "HTTP/1.0",
+                  "HTTP/1.1"
+                ]
+              },
+              "host": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 2048
+              },
+              "user_agent": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 1024
+              }
+            },
+            "required": [
+              "type",
+              "method",
+              "path",
+              "version",
+              "host",
+              "user_agent"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "telnet_login"
+              },
+              "username": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "password": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 256
+              },
+              "credentials_redacted": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "type",
+              "username",
+              "password",
+              "credentials_redacted"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "notice"
+              },
+              "msg": {
+                "type": "string",
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "type",
+              "msg"
+            ]
+          }
+        ]
+      }
+    },
+    "events_truncated": {
+      "type": "boolean"
+    },
+    "close_reason": {
+      "enum": [
+        "client_closed",
+        "timeout",
+        "lifetime_limit",
+        "byte_limit",
+        "protocol_error",
+        "server_closed",
+        "error",
+        "shutdown"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "ts",
+    "session_id",
+    "sensor",
+    "endpoint",
+    "protocol",
+    "src",
+    "dst",
+    "dst_port",
+    "duration_ms",
+    "bytes_received",
+    "payload_captured",
+    "bytes_truncated",
+    "data_preview_hex",
+    "data_preview_ascii",
+    "privacy_mode",
+    "events",
+    "events_truncated",
+    "close_reason"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "privacy_mode": {
+            "const": "metadata"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload_captured": {
+            "const": false
+          },
+          "bytes_truncated": {
+            "const": false
+          },
+          "data_preview_hex": {
+            "const": ""
+          },
+          "data_preview_ascii": {
+            "const": ""
+          }
+        }
+      }
+    }
+  ]
+}

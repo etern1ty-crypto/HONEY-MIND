@@ -1,0 +1,29 @@
+{
+  "as_of": "2026-09-08",
+  "project_version": "0.2.0",
+  "delivery_status": "source_review_candidate_not_production_verified",
+  "original_archive_sha256": "db9efabdd41af1dcec86abd7de507a0c22532f6985d7759861a94c6c7f37bc65",
+  "license_sha256": "f60d8742dfea01ce6c749dd254e4d032cbc31f4f4aafaad4330559f0689f2f37",
+  "rust_tests_declared_not_run": 64,
+  "offline_contract_checks": 9,
+  "json_schema_cases_passed": 7,
+  "release_gate_exit": 2,
+  "blocked": [
+    "Rust build",
+    "Rust tests",
+    "rustfmt",
+    "Clippy",
+    "cargo metadata resolver",
+    "cargo-audit",
+    "Docker build/runtime",
+    "systemd runtime",
+    "promtool",
+    "load/fault-injection/fuzz tests"
+  ],
+  "default_budgets_computed_from_config": {
+    "retained_new_file_bytes": 41943040,
+    "rate_limit_timestamps": 122880,
+    "session_read_bytes": 65536,
+    "preview_bytes_if_full_mode": 1024
+  }
+}

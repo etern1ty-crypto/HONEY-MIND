@@ -1,0 +1,34 @@
+rule_files:
+  - alerts.yml
+evaluation_interval: 15s
+tests:
+  - interval: 15s
+    input_series:
+      - series: 'minotaur_connections_total{protocol="ssh",sensor_id="s1",environment="production"}'
+        values: '0 0 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: MinotaurDecoyTouched
+        exp_alerts:
+          - exp_labels:
+              sensor_id: s1
+              environment: production
+              severity: warning
+            exp_annotations:
+              summary: "Unexpected connection to decoy s1"
+              description: "Inspect the sensor JSONL and validate approved scanner activity; this signal alone is not proof of compromise."
+  - interval: 15s
+    input_series:
+      - series: 'up{job="minotaur",instance="127.0.0.1:9090"}'
+        values: '0+0x8'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: MinotaurDown
+        exp_alerts:
+          - exp_labels:
+              job: minotaur
+              instance: "127.0.0.1:9090"
+              severity: critical
+            exp_annotations:
+              summary: "Minotaur management endpoint is unreachable"
+              description: "A failed writer stops the process. Check service logs, network access and storage."

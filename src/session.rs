@@ -1,4 +1,4 @@
-//! Session model: the structured record we emit per honeypot connection.
+//! Versioned JSONL records and privacy enforcement before events enter the queue.
 
 use std::net::SocketAddr;
 use std::time::Instant;
@@ -7,40 +7,40 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::config::Protocol;
+use crate::config::{Config, EndpointConfig, PrivacyConfig, PrivacyMode, Protocol, SensorConfig};
 
-/// A single TCP session captured by the honeypot.
-///
-/// Fields are populated as the connection progresses; `finalize` produces the
-/// serialized JSONL record at the end.
+pub const SCHEMA_VERSION: u32 = 2;
+const MAX_EVENTS: usize = 16;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionRecord {
-    /// ISO-8601 timestamp of connection acceptance (UTC).
+    pub schema_version: u32,
     pub ts: DateTime<Utc>,
     pub session_id: Uuid,
+    pub sensor: SensorConfig,
+    pub endpoint: String,
     pub protocol: &'static str,
     pub src: SocketAddr,
+    pub dst: SocketAddr,
     pub dst_port: u16,
     pub duration_ms: u64,
-    pub bytes_received: usize,
+    pub bytes_received: u64,
+    pub payload_captured: bool,
     pub bytes_truncated: bool,
-    /// First N bytes received, lowercase hex.
     pub data_preview_hex: String,
-    /// First N bytes received, printable-ASCII representation (control chars
-    /// replaced with `.`).
     pub data_preview_ascii: String,
+    pub privacy_mode: PrivacyMode,
     pub events: Vec<SessionEvent>,
+    pub events_truncated: bool,
     pub close_reason: CloseReason,
 }
 
-/// A structured event captured during the session. Protocol handlers append
-/// these as they parse meaningful actions from the client.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionEvent {
-    /// SSH banner exchange: client's banner string.
-    SshClientBanner { banner: String },
-    /// HTTP request line + first few headers.
+    SshClientBanner {
+        banner: String,
+    },
     HttpRequest {
         method: String,
         path: String,
@@ -48,106 +48,184 @@ pub enum SessionEvent {
         host: Option<String>,
         user_agent: Option<String>,
     },
-    /// Telnet captured a login attempt (username then password).
     TelnetLogin {
         username: String,
         password: Option<String>,
+        credentials_redacted: bool,
     },
-    /// Generic notice (rate-limited, oversize, etc.).
-    Notice { msg: String },
+    Notice {
+        msg: String,
+    },
 }
 
-/// Reason a session ended.
+impl SessionEvent {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::SshClientBanner { .. } => "ssh_client_banner",
+            Self::HttpRequest { .. } => "http_request",
+            Self::TelnetLogin { .. } => "telnet_login",
+            Self::Notice { .. } => "notice",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseReason {
     ClientClosed,
     Timeout,
+    LifetimeLimit,
+    ByteLimit,
+    ProtocolError,
     ServerClosed,
     Error,
     Shutdown,
 }
 
-/// Mutable session state used by protocol handlers.
+impl CloseReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ClientClosed => "client_closed",
+            Self::Timeout => "timeout",
+            Self::LifetimeLimit => "lifetime_limit",
+            Self::ByteLimit => "byte_limit",
+            Self::ProtocolError => "protocol_error",
+            Self::ServerClosed => "server_closed",
+            Self::Error => "error",
+            Self::Shutdown => "shutdown",
+        }
+    }
+}
+
 pub struct SessionState {
     pub id: Uuid,
     pub protocol: Protocol,
     pub src: SocketAddr,
-    pub dst_port: u16,
+    pub dst: SocketAddr,
     pub started_at: Instant,
     pub ts: DateTime<Utc>,
-    pub bytes_received: usize,
-    /// Captured prefix, capped at `max_preview_bytes`.
-    pub preview: Vec<u8>,
-    pub max_preview_bytes: usize,
-    pub bytes_truncated: bool,
+    pub bytes_received: u64,
     pub events: Vec<SessionEvent>,
+    preview: Vec<u8>,
+    preview_limit: usize,
+    input_limit: usize,
+    events_truncated: bool,
+    sensor: SensorConfig,
+    endpoint: String,
+    privacy: PrivacyConfig,
 }
 
 impl SessionState {
-    pub fn new(
-        protocol: Protocol,
-        src: SocketAddr,
-        dst_port: u16,
-        max_preview_bytes: usize,
-    ) -> Self {
+    pub fn new(ep: &EndpointConfig, src: SocketAddr, dst: SocketAddr, cfg: &Config) -> Self {
         Self {
             id: Uuid::new_v4(),
-            protocol,
+            protocol: ep.protocol,
             src,
-            dst_port,
+            dst,
             started_at: Instant::now(),
             ts: Utc::now(),
             bytes_received: 0,
-            preview: Vec::new(),
-            max_preview_bytes,
-            bytes_truncated: false,
             events: Vec::new(),
+            preview: Vec::new(),
+            preview_limit: cfg.server.max_bytes_per_session,
+            input_limit: cfg.server.max_read_bytes_per_session,
+            events_truncated: false,
+            sensor: cfg.sensor.clone(),
+            endpoint: ep.label(),
+            privacy: cfg.privacy.clone(),
         }
     }
 
-    /// Record a chunk of bytes received from the client. Appends to the preview
-    /// buffer up to `max_preview_bytes`, then sets the truncated flag.
-    pub fn record_bytes(&mut self, chunk: &[u8]) {
-        self.bytes_received = self.bytes_received.saturating_add(chunk.len());
-        if self.preview.len() < self.max_preview_bytes {
-            let remaining = self.max_preview_bytes - self.preview.len();
-            let take = remaining.min(chunk.len());
-            self.preview.extend_from_slice(&chunk[..take]);
-            if take < chunk.len() {
-                self.bytes_truncated = true;
+    pub fn remaining_input(&self) -> usize {
+        self.input_limit
+            .saturating_sub(self.bytes_received.min(usize::MAX as u64) as usize)
+    }
+
+    /// Only SessionIo should call this for network input: it enforces input_limit.
+    pub fn record_bytes(&mut self, bytes: &[u8]) {
+        self.bytes_received = self.bytes_received.saturating_add(bytes.len() as u64);
+        if self.privacy.mode == PrivacyMode::Full {
+            let take = self
+                .preview_limit
+                .saturating_sub(self.preview.len())
+                .min(bytes.len());
+            self.preview.extend_from_slice(&bytes[..take]);
+        }
+    }
+
+    pub fn push_event(&mut self, mut event: SessionEvent) {
+        if self.events.len() >= MAX_EVENTS {
+            self.events_truncated = true;
+            return;
+        }
+        match &mut event {
+            SessionEvent::HttpRequest {
+                path,
+                host,
+                user_agent,
+                ..
+            } => {
+                if !self.privacy.capture_http_path {
+                    *path = "[redacted]".into();
+                } else if self.privacy.mode == PrivacyMode::Metadata {
+                    if let Some(index) = path.find(['?', '#']) {
+                        path.truncate(index);
+                    }
+                }
+                if self.privacy.mode == PrivacyMode::Metadata {
+                    *host = None;
+                    *user_agent = None;
+                }
             }
-        } else {
-            self.bytes_truncated = true;
+            SessionEvent::TelnetLogin {
+                username,
+                password,
+                credentials_redacted,
+            } => {
+                if self.privacy.mode == PrivacyMode::Metadata {
+                    *username = "[redacted]".into();
+                    if password.is_some() {
+                        *password = Some("[redacted]".into());
+                    }
+                    *credentials_redacted = true;
+                }
+            }
+            _ => {}
         }
-    }
-
-    pub fn push_event(&mut self, event: SessionEvent) {
         self.events.push(event);
     }
 
+    pub fn notice(&mut self, msg: &str) {
+        self.push_event(SessionEvent::Notice { msg: msg.into() });
+    }
+
     pub fn finalize(self, close_reason: CloseReason) -> SessionRecord {
-        let duration_ms = self.started_at.elapsed().as_millis() as u64;
-        let data_preview_hex = hex::encode(&self.preview);
-        let data_preview_ascii = ascii_preview(&self.preview);
+        let payload_captured = self.privacy.mode == PrivacyMode::Full && self.preview_limit > 0;
+        let duration_ms = self.started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
         SessionRecord {
+            schema_version: SCHEMA_VERSION,
             ts: self.ts,
             session_id: self.id,
+            sensor: self.sensor,
+            endpoint: self.endpoint,
             protocol: self.protocol.as_str(),
             src: self.src,
-            dst_port: self.dst_port,
+            dst: self.dst,
+            dst_port: self.dst.port(),
             duration_ms,
             bytes_received: self.bytes_received,
-            bytes_truncated: self.bytes_truncated,
-            data_preview_hex,
-            data_preview_ascii,
+            payload_captured,
+            bytes_truncated: payload_captured && self.bytes_received > self.preview.len() as u64,
+            data_preview_hex: hex::encode(&self.preview),
+            data_preview_ascii: ascii_preview(&self.preview),
+            privacy_mode: self.privacy.mode,
             events: self.events,
+            events_truncated: self.events_truncated,
             close_reason,
         }
     }
 }
 
-/// Replace non-printable bytes with `.` and return as a UTF-8 string.
 pub fn ascii_preview(bytes: &[u8]) -> String {
     bytes
         .iter()
@@ -162,48 +240,85 @@ pub fn ascii_preview(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 
-    fn dummy_addr() -> SocketAddr {
-        "127.0.0.1:1234".parse().unwrap()
+    fn state(full: bool) -> SessionState {
+        let mut cfg = Config::default();
+        cfg.server.max_bytes_per_session = 4;
+        if full {
+            cfg.privacy.mode = PrivacyMode::Full;
+        }
+        let addr = "127.0.0.1:1234".parse().unwrap();
+        let ep = EndpointConfig::new(addr, Protocol::Telnet);
+        SessionState::new(&ep, addr, addr, &cfg)
     }
 
     #[test]
-    fn record_bytes_caps_preview() {
-        let mut s = SessionState::new(Protocol::Raw, dummy_addr(), 22, 4);
+    fn full_capture_is_bounded() {
+        let mut s = state(true);
         s.record_bytes(b"hello world");
-        assert_eq!(s.bytes_received, 11);
-        assert_eq!(s.preview, b"hell");
-        assert!(s.bytes_truncated);
+        s.record_bytes(b"");
+        let r = s.finalize(CloseReason::ClientClosed);
+        assert_eq!(r.bytes_received, 11);
+        assert_eq!(r.data_preview_ascii, "hell");
+        assert!(r.bytes_truncated);
     }
 
     #[test]
-    fn record_bytes_below_cap_no_truncation() {
-        let mut s = SessionState::new(Protocol::Raw, dummy_addr(), 22, 16);
-        s.record_bytes(b"hi");
-        s.record_bytes(b"!");
-        assert_eq!(s.bytes_received, 3);
-        assert_eq!(s.preview, b"hi!");
-        assert!(!s.bytes_truncated);
+    fn exact_cap_and_empty_chunk_are_not_truncation() {
+        let mut s = state(true);
+        s.record_bytes(b"test");
+        s.record_bytes(b"");
+        assert!(!s.finalize(CloseReason::ClientClosed).bytes_truncated);
     }
 
     #[test]
-    fn ascii_preview_replaces_nonprintable() {
-        assert_eq!(ascii_preview(b"ab\x01c\xff"), "ab.c.");
-    }
-
-    #[test]
-    fn finalize_serializes_to_json() {
-        let mut s = SessionState::new(Protocol::Ssh, dummy_addr(), 2222, 32);
-        s.record_bytes(b"SSH-2.0-Client_1.0\r\n");
-        s.push_event(SessionEvent::SshClientBanner {
-            banner: "SSH-2.0-Client_1.0".into(),
+    fn metadata_redacts_credentials_and_never_stores_payload() {
+        let mut s = state(false);
+        s.record_bytes(b"admin\r\nsecret\r\n");
+        s.push_event(SessionEvent::TelnetLogin {
+            username: "admin".into(),
+            password: Some("secret".into()),
+            credentials_redacted: false,
         });
-        let rec = s.finalize(CloseReason::ClientClosed);
-        let json = serde_json::to_string(&rec).unwrap();
-        assert!(json.contains("\"protocol\":\"ssh\""));
-        assert!(json.contains("\"close_reason\":\"client_closed\""));
-        assert!(json.contains("ssh_client_banner"));
+        let json = serde_json::to_string(&s.finalize(CloseReason::ClientClosed)).unwrap();
+        assert!(!json.contains("secret"));
+        assert!(!json.contains("admin"));
+        assert!(json.contains("[redacted]"));
+        assert!(json.contains("\"payload_captured\":false"));
+    }
+
+    #[test]
+    fn metadata_strips_query_and_headers() {
+        let mut s = state(false);
+        s.push_event(SessionEvent::HttpRequest {
+            method: "GET".into(),
+            path: "/admin?token=secret#secret".into(),
+            version: "HTTP/1.1".into(),
+            host: Some("private.example".into()),
+            user_agent: Some("private-client".into()),
+        });
+        let json = serde_json::to_string(&s.finalize(CloseReason::ServerClosed)).unwrap();
+        assert!(json.contains("/admin"));
+        assert!(!json.contains("secret"));
+        assert!(!json.contains("private"));
+    }
+
+    #[test]
+    fn event_vector_is_bounded() {
+        let mut s = state(false);
+        for _ in 0..100 {
+            s.notice("bounded");
+        }
+        let r = s.finalize(CloseReason::ServerClosed);
+        assert_eq!(r.events.len(), MAX_EVENTS);
+        assert!(r.events_truncated);
+    }
+
+    #[test]
+    fn preview_is_printable() {
+        assert_eq!(ascii_preview(b"ab\x00\xff"), "ab..");
     }
 }

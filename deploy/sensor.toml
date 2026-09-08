@@ -1,23 +1,17 @@
-# Safe local profile. Relative logging.output resolves against THIS file.
-# minotaur --config config.example.toml validate-config
-# minotaur --config config.example.toml run
-
+# Authorised internal-network decoy host only. Apply network isolation first.
+# Give each installation a unique sensor.id and a useful site tag.
 [sensor]
-id = "local-sensor"
-environment = "development"
+id = "branch-01-sensor-01"
+environment = "production"
 [sensor.tags]
-site = "lab"
+site = "branch-01"
 
 [privacy]
-# metadata: no raw preview, Telnet credentials, HTTP query or header values.
-# full: explicit sensitive forensic capture, still bounded by server limits.
 mode = "metadata"
-# Paths can themselves contain secrets. False redacts the structured path too.
 capture_http_path = true
 
 [logging]
-output = "honeypot.jsonl"
-# "-" or "" always selects stdout; with a file, true mirrors to stdout.
+output = "/var/lib/minotaur/honeypot.jsonl"
 stdout = false
 buffer_size = 256
 max_file_bytes = 10485760
@@ -44,26 +38,24 @@ ignore_source_ips = []
 
 [[endpoint]]
 name = "admin-ssh"
-bind = "127.0.0.1:2222"
+bind = "0.0.0.0:2222"
 protocol = "ssh"
-banner = "SSH-2.0-OpenSSH_9.6"
 
 [[endpoint]]
 name = "admin-http"
-bind = "127.0.0.1:8080"
+bind = "0.0.0.0:8080"
 protocol = "http"
 server_header = "nginx"
 http_status = 404
 
 [[endpoint]]
 name = "legacy-telnet"
-bind = "127.0.0.1:2323"
+bind = "0.0.0.0:2323"
 protocol = "telnet"
 banner = "Network appliance"
-login_prompt = "login: "
 
 [[endpoint]]
 name = "cache-decoy"
-bind = "127.0.0.1:6379"
+bind = "0.0.0.0:6379"
 protocol = "raw"
 banner = "-NOAUTH Authentication required.\r\n"

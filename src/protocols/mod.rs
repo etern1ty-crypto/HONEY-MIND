@@ -1,8 +1,4 @@
-//! Protocol emulators.
-//!
-//! Each handler is an `async fn handle(...)` that consumes a TCP stream and
-//! returns the close reason. Handlers update `SessionState` with the bytes
-//! seen and any structured events parsed from the client.
+//! Low-interaction protocol dispatch and one bounded I/O implementation.
 
 pub mod http;
 pub mod raw;
@@ -11,41 +7,71 @@ pub mod telnet;
 
 use std::time::Duration;
 
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
+use tracing::debug;
 
 use crate::config::{EndpointConfig, Protocol};
 use crate::session::{CloseReason, SessionState};
 
-/// Dispatch table.
 pub async fn handle(
     stream: TcpStream,
     state: &mut SessionState,
     ep: &EndpointConfig,
-    session_timeout: Duration,
+    idle_timeout: Duration,
 ) -> CloseReason {
+    let mut io = SessionIo {
+        stream,
+        idle_timeout,
+    };
     match ep.protocol {
-        Protocol::Raw => raw::handle(stream, state, ep, session_timeout).await,
-        Protocol::Ssh => ssh::handle(stream, state, ep, session_timeout).await,
-        Protocol::Http => http::handle(stream, state, ep, session_timeout).await,
-        Protocol::Telnet => telnet::handle(stream, state, ep, session_timeout).await,
+        Protocol::Raw => raw::handle(&mut io, state, ep).await,
+        Protocol::Ssh => ssh::handle(&mut io, state, ep).await,
+        Protocol::Http => http::handle(&mut io, state, ep).await,
+        Protocol::Telnet => telnet::handle(&mut io, state, ep).await,
     }
 }
 
-/// Read up to `buf.len()` bytes, applying a per-read timeout. Returns:
-///   - `Ok(Some(n))`  — read `n` bytes (n > 0)
-///   - `Ok(None)`     — client closed cleanly (EOF)
-///   - `Err(reason)`  — timeout or IO error; caller should record reason.
-pub async fn read_with_timeout(
-    stream: &mut TcpStream,
-    buf: &mut [u8],
-    deadline: Duration,
-) -> Result<Option<usize>, CloseReason> {
-    match timeout(deadline, stream.read(buf)).await {
-        Ok(Ok(0)) => Ok(None),
-        Ok(Ok(n)) => Ok(Some(n)),
-        Ok(Err(_)) => Err(CloseReason::Error),
-        Err(_) => Err(CloseReason::Timeout),
+/// The session supervisor adds cancellation and the absolute lifetime deadline.
+/// No protocol handler performs unbounded direct socket I/O.
+pub struct SessionIo {
+    stream: TcpStream,
+    idle_timeout: Duration,
+}
+
+impl SessionIo {
+    pub async fn read(
+        &mut self,
+        state: &mut SessionState,
+        buf: &mut [u8],
+    ) -> Result<Option<usize>, CloseReason> {
+        let available = state.remaining_input().min(buf.len());
+        if available == 0 {
+            return Err(CloseReason::ByteLimit);
+        }
+        match timeout(self.idle_timeout, self.stream.read(&mut buf[..available])).await {
+            Ok(Ok(0)) => Ok(None),
+            Ok(Ok(n)) => {
+                state.record_bytes(&buf[..n]);
+                Ok(Some(n))
+            }
+            Ok(Err(error)) => {
+                debug!(kind = ?error.kind(), "TCP read failed");
+                Err(CloseReason::Error)
+            }
+            Err(_) => Err(CloseReason::Timeout),
+        }
+    }
+
+    pub async fn write(&mut self, bytes: &[u8]) -> Result<(), CloseReason> {
+        match timeout(self.idle_timeout, self.stream.write_all(bytes)).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => {
+                debug!(kind = ?error.kind(), "TCP write failed");
+                Err(CloseReason::Error)
+            }
+            Err(_) => Err(CloseReason::Timeout),
+        }
     }
 }

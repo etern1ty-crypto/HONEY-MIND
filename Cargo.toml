@@ -1,13 +1,13 @@
 [package]
 name = "minotaur"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.93"
 license = "MIT"
-description = "Low-interaction TCP honeypot with protocol emulation, JSONL logging, and Prometheus metrics."
+description = "Privacy-first, bounded TCP deception sensor for internal networks."
 repository = "https://github.com/etern1ty-crypto/HONEY-MIND"
 readme = "README.md"
-keywords = ["honeypot", "security", "blueteam", "tcp"]
+keywords = ["honeypot", "security", "blueteam", "tcp", "prometheus"]
 categories = ["network-programming", "command-line-utilities"]
 
 [[bin]]
@@ -15,24 +15,26 @@ name = "minotaur"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "signal", "sync", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "time", "signal", "sync", "fs"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 anyhow = "1"
-thiserror = "1"
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
-bytes = "1"
 hex = "0.4"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
-prometheus = "0.13"
+# Only text exposition is used. Do not pull in protobuf 2.x (RUSTSEC-2024-0437).
+prometheus = { version = "0.13", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
@@ -42,3 +44,6 @@ tokio = { version = "1", features = ["full", "test-util"] }
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[lints.rust]
+unsafe_code = "forbid"

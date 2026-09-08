@@ -1,79 +1,99 @@
-//! Per-source-IP connection rate limit.
-//!
-//! Simple sliding-window counter: track the timestamp of each accepted
-//! connection per source IP for the last 60 seconds. New connections beyond
-//! the configured rate are rejected.
+//! Exact sliding 60-second window with hard bounds on tracked addresses.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use crate::config::canonical_ip;
+
 const WINDOW: Duration = Duration::from_secs(60);
 
-/// In-memory rate limiter. Cheap enough for typical honeypot loads
-/// (thousands of unique IPs per minute on commodity hardware).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    Allowed,
+    RateLimit,
+    Capacity,
+    Unavailable,
+}
+
+impl Decision {
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Allowed => "allowed",
+            Self::RateLimit => "rate_limit",
+            Self::Capacity => "rate_limit_capacity",
+            Self::Unavailable => "rate_limiter_unavailable",
+        }
+    }
+}
+
 pub struct RateLimiter {
-    /// 0 disables the limiter.
     limit: u32,
+    max_ips: usize,
     inner: Mutex<HashMap<IpAddr, VecDeque<Instant>>>,
 }
 
 impl RateLimiter {
-    pub fn new(limit_per_min: u32) -> Self {
+    pub fn new(limit: u32, max_ips: usize) -> Self {
         Self {
-            limit: limit_per_min,
+            limit,
+            max_ips,
             inner: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Returns `true` if a new connection from this IP is allowed.
-    pub fn check(&self, ip: IpAddr) -> bool {
-        if self.limit == 0 {
-            return true;
-        }
-        let now = Instant::now();
-        let cutoff = now - WINDOW;
-        let mut guard = self.inner.lock().expect("ratelimit mutex poisoned");
-        let entry = guard.entry(ip).or_default();
-        while let Some(&front) = entry.front() {
-            if front < cutoff {
-                entry.pop_front();
-            } else {
-                break;
-            }
-        }
-        if entry.len() as u32 >= self.limit {
-            return false;
-        }
-        entry.push_back(now);
-        true
+    pub fn check(&self, ip: IpAddr) -> Decision {
+        self.check_at(ip, Instant::now())
     }
 
-    /// Drop empty entries. Should be called periodically (e.g. once per minute)
-    /// to prevent unbounded memory growth from scanners that hit once and never
-    /// come back.
+    fn check_at(&self, ip: IpAddr, now: Instant) -> Decision {
+        if self.limit == 0 {
+            return Decision::Allowed;
+        }
+        // Fail closed on poisoning, instead of panicking every accept task.
+        let Ok(mut map) = self.inner.lock() else {
+            return Decision::Unavailable;
+        };
+        let ip = canonical_ip(ip);
+        if !map.contains_key(&ip) && map.len() >= self.max_ips {
+            // Do not rescan the whole map for every hostile new address.
+            // The once-per-second maintenance task reclaims idle buckets.
+            return Decision::Capacity;
+        }
+        let window = map.entry(ip).or_default();
+        expire(window, now);
+        if window.len() >= self.limit as usize {
+            return Decision::RateLimit;
+        }
+        window.push_back(now);
+        Decision::Allowed
+    }
+
     pub fn evict_idle(&self) {
-        if self.limit == 0 {
-            return;
-        }
-        let cutoff = Instant::now() - WINDOW;
-        let mut guard = self.inner.lock().expect("ratelimit mutex poisoned");
-        guard.retain(|_, q| {
-            while let Some(&front) = q.front() {
-                if front < cutoff {
-                    q.pop_front();
-                } else {
-                    break;
-                }
-            }
-            !q.is_empty()
-        });
+        self.evict_at(Instant::now());
     }
 
-    /// Number of source IPs currently tracked.
+    fn evict_at(&self, now: Instant) {
+        if let Ok(mut map) = self.inner.lock() {
+            map.retain(|_, window| {
+                expire(window, now);
+                !window.is_empty()
+            });
+        }
+    }
+
     pub fn tracked_ips(&self) -> usize {
-        self.inner.lock().expect("ratelimit mutex poisoned").len()
+        self.inner.lock().map(|map| map.len()).unwrap_or(0)
+    }
+}
+
+fn expire(window: &mut VecDeque<Instant>, now: Instant) {
+    while window
+        .front()
+        .is_some_and(|time| now.saturating_duration_since(*time) >= WINDOW)
+    {
+        window.pop_front();
     }
 }
 
@@ -81,49 +101,60 @@ impl RateLimiter {
 mod tests {
     use super::*;
 
-    fn ip(s: &str) -> IpAddr {
-        s.parse().unwrap()
+    fn ip(value: &str) -> IpAddr {
+        value.parse().unwrap()
     }
 
     #[test]
-    fn zero_limit_allows_everything() {
-        let rl = RateLimiter::new(0);
-        for _ in 0..1000 {
-            assert!(rl.check(ip("1.2.3.4")));
+    fn disabled_limiter_does_not_allocate() {
+        let limiter = RateLimiter::new(0, 1);
+        for _ in 0..100 {
+            assert_eq!(limiter.check(ip("192.0.2.1")), Decision::Allowed);
         }
+        assert_eq!(limiter.tracked_ips(), 0);
     }
 
     #[test]
-    fn blocks_after_limit() {
-        let rl = RateLimiter::new(3);
-        let addr = ip("1.2.3.4");
-        assert!(rl.check(addr));
-        assert!(rl.check(addr));
-        assert!(rl.check(addr));
-        assert!(!rl.check(addr));
-        assert!(!rl.check(addr));
+    fn independently_limits_ips() {
+        let limiter = RateLimiter::new(1, 2);
+        assert_eq!(limiter.check(ip("192.0.2.1")), Decision::Allowed);
+        assert_eq!(limiter.check(ip("192.0.2.1")), Decision::RateLimit);
+        assert_eq!(limiter.check(ip("192.0.2.2")), Decision::Allowed);
     }
 
     #[test]
-    fn independent_per_ip() {
-        let rl = RateLimiter::new(2);
-        assert!(rl.check(ip("1.1.1.1")));
-        assert!(rl.check(ip("1.1.1.1")));
-        assert!(!rl.check(ip("1.1.1.1")));
-        assert!(rl.check(ip("2.2.2.2")));
-        assert!(rl.check(ip("2.2.2.2")));
-        assert!(!rl.check(ip("2.2.2.2")));
+    fn timestamp_at_exact_boundary_expires() {
+        let limiter = RateLimiter::new(1, 1);
+        let now = Instant::now();
+        let addr = ip("192.0.2.1");
+        assert_eq!(limiter.check_at(addr, now), Decision::Allowed);
+        assert_eq!(
+            limiter.check_at(addr, now + WINDOW - Duration::from_nanos(1)),
+            Decision::RateLimit
+        );
+        assert_eq!(limiter.check_at(addr, now + WINDOW), Decision::Allowed);
     }
 
     #[test]
-    fn evict_idle_removes_empty_buckets() {
-        let rl = RateLimiter::new(1);
-        rl.check(ip("3.3.3.3"));
-        assert_eq!(rl.tracked_ips(), 1);
-        // Force the bucket to be considered idle by manipulating the time
-        // directly is not portable; instead we just verify the method runs.
-        rl.evict_idle();
-        // Still tracked because not expired yet.
-        assert_eq!(rl.tracked_ips(), 1);
+    fn table_is_bounded_and_idle_buckets_are_reclaimed() {
+        let limiter = RateLimiter::new(1, 1);
+        let now = Instant::now();
+        assert_eq!(limiter.check_at(ip("192.0.2.1"), now), Decision::Allowed);
+        assert_eq!(limiter.check_at(ip("192.0.2.2"), now), Decision::Capacity);
+        assert_eq!(limiter.tracked_ips(), 1);
+        limiter.evict_at(now + WINDOW);
+        assert_eq!(limiter.tracked_ips(), 0);
+        assert_eq!(
+            limiter.check_at(ip("192.0.2.2"), now + WINDOW),
+            Decision::Allowed
+        );
+    }
+
+    #[test]
+    fn mapped_ipv6_shares_the_ipv4_bucket() {
+        let limiter = RateLimiter::new(1, 2);
+        assert_eq!(limiter.check(ip("192.0.2.1")), Decision::Allowed);
+        assert_eq!(limiter.check(ip("::ffff:192.0.2.1")), Decision::RateLimit);
+        assert_eq!(limiter.tracked_ips(), 1);
     }
 }

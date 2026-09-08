@@ -1,0 +1,82 @@
+{
+  "status": "passed",
+  "formatter": "Prettier",
+  "parser": "markdown-it",
+  "documents": [
+    {
+      "path": "CHANGELOG.md",
+      "headings": 6,
+      "code_blocks": 0
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "headings": 3,
+      "code_blocks": 1
+    },
+    {
+      "path": "README.md",
+      "headings": 10,
+      "code_blocks": 4
+    },
+    {
+      "path": "SECURITY.md",
+      "headings": 6,
+      "code_blocks": 0
+    },
+    {
+      "path": "docs/API.md",
+      "headings": 6,
+      "code_blocks": 2
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "headings": 7,
+      "code_blocks": 1
+    },
+    {
+      "path": "docs/AUDIT.md",
+      "headings": 6,
+      "code_blocks": 0
+    },
+    {
+      "path": "docs/CHANGESET.md",
+      "headings": 1,
+      "code_blocks": 0
+    },
+    {
+      "path": "docs/CONFIGURATION.md",
+      "headings": 9,
+      "code_blocks": 1
+    },
+    {
+      "path": "docs/DEPENDENCIES.md",
+      "headings": 7,
+      "code_blocks": 1
+    },
+    {
+      "path": "docs/DEPLOYMENT.md",
+      "headings": 8,
+      "code_blocks": 5
+    },
+    {
+      "path": "docs/PRODUCT.md",
+      "headings": 8,
+      "code_blocks": 0
+    },
+    {
+      "path": "docs/TESTING.md",
+      "headings": 6,
+      "code_blocks": 2
+    },
+    {
+      "path": "docs/VERIFICATION.md",
+      "headings": 5,
+      "code_blocks": 3
+    },
+    {
+      "path": "examples/e2e/README.md",
+      "headings": 3,
+      "code_blocks": 3
+    }
+  ]
+}

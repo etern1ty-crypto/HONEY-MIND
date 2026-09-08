@@ -1,0 +1,66 @@
+{
+  "status": "passed",
+  "scope": "offline contracts only; no Rust build/runtime/security claim",
+  "checks": [
+    {
+      "name": "required_files",
+      "status": "passed",
+      "detail": 28
+    },
+    {
+      "name": "toml_parse_and_safe_examples",
+      "status": "passed",
+      "detail": 6
+    },
+    {
+      "name": "manifest_and_locked_graph",
+      "status": "passed",
+      "detail": {
+        "locked_packages": 142,
+        "direct_dependency_names": 18
+      }
+    },
+    {
+      "name": "python_ast",
+      "status": "passed",
+      "detail": 2
+    },
+    {
+      "name": "rust_lexical_delimiters_only",
+      "status": "passed",
+      "detail": 15
+    },
+    {
+      "name": "rust_source_contracts_and_includes",
+      "status": "passed",
+      "detail": 15
+    },
+    {
+      "name": "relative_markdown_links",
+      "status": "passed",
+      "detail": 40
+    },
+    {
+      "name": "json_schema_parse_and_example_shape",
+      "status": "passed",
+      "detail": {
+        "schema_parsed": true,
+        "example_shape_checked": true,
+        "full_json_schema_validation": false
+      }
+    },
+    {
+      "name": "mit_attribution",
+      "status": "passed",
+      "detail": "f60d8742dfea01ce6c749dd254e4d032cbc31f4f4aafaad4330559f0689f2f37"
+    }
+  ],
+  "declared_rust_tests_not_executed": 64,
+  "tools_available": {
+    "rustc": false,
+    "cargo": false,
+    "docker": false,
+    "promtool": false,
+    "python3": true
+  }
+}
