@@ -181,14 +181,12 @@ impl SessionState {
                 username,
                 password,
                 credentials_redacted,
-            } => {
-                if self.privacy.mode == PrivacyMode::Metadata {
-                    *username = "[redacted]".into();
-                    if password.is_some() {
-                        *password = Some("[redacted]".into());
-                    }
-                    *credentials_redacted = true;
+            } if self.privacy.mode == PrivacyMode::Metadata => {
+                *username = "[redacted]".into();
+                if password.is_some() {
+                    *password = Some("[redacted]".into());
                 }
+                *credentials_redacted = true;
             }
             _ => {}
         }
