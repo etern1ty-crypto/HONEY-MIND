@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MINOTAUR // Deception Sensor Overview</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card-bg: #161b22;
+    --border: #30363d;
+    --text-primary: #f0f6fc;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #238636;
+    --green-glow: #2ea043;
+    --red: #da3633;
+    --orange: #d29922;
+    --code-bg: #090d13;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 32px;
+    width: 1200px;
+    margin: 0 auto;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 24px;
+    margin-bottom: 28px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .logo-box {
+    width: 48px;
+    height: 48px;
+    background: linear-gradient(135deg, #1f6feb, #238636);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 900;
+    font-size: 24px;
+    color: #fff;
+  }
+  .title-group h1 {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+  }
+  .title-group p {
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+  .status-badge {
+    background: rgba(35, 134, 54, 0.15);
+    border: 1px solid var(--green);
+    color: #3fb950;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #3fb950;
+    box-shadow: 0 0 8px #3fb950;
+  }
+  .metrics-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .metric-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px;
+  }
+  .metric-label {
+    color: var(--text-muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+  .metric-value {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+  .decoys-header {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 14px;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .decoys-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .decoy-box {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  .decoy-box::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--accent);
+  }
+  .decoy-title {
+    font-weight: 600;
+    font-size: 15px;
+    margin-bottom: 4px;
+  }
+  .decoy-port {
+    font-family: monospace;
+    color: #58a6ff;
+    font-size: 13px;
+    margin-bottom: 8px;
+  }
+  .decoy-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .stream-section {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 16px;
+  }
+  .panel {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+  }
+  .panel-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 14px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .event-item {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--orange);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+    font-family: monospace;
+    font-size: 12px;
+  }
+  .event-meta {
+    display: flex;
+    justify-content: space-between;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .event-cmd {
+    color: #79c0ff;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+    font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+    font-size: 11.5px;
+    color: #c9d1d9;
+    overflow: hidden;
+    line-height: 1.45;
+  }
+  .k { color: #ff7b72; }
+  .s { color: #a5d6ff; }
+  .n { color: #79c0ff; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">
+    <div class="logo-box">M</div>
+    <div class="title-group">
+      <h1>MINOTAUR // HONEY-MIND</h1>
+      <p>Bounded, Privacy-Preserving TCP Deception Sensor for SOC/MSP Operations</p>
+    </div>
+  </div>
+  <div class="status-badge">
+    <div class="pulse-dot"></div>
+    4 DECOYS BOUND & RUNNING
+  </div>
+</div>
+
+<div class="metrics-row">
+  <div class="metric-card">
+    <div class="metric-label">Active Traps</div>
+    <div class="metric-value">4 / 4</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-label">Rate Limit Per IP</div>
+    <div class="metric-value">30 / min</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-label">Privacy Policy</div>
+    <div class="metric-value" style="color: #3fb950;">Metadata</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-label">Prometheus Exporter</div>
+    <div class="metric-value" style="color: #58a6ff;">:9090</div>
+  </div>
+</div>
+
+<div class="decoys-header">
+  <span>🎯 Configured Low-Interaction Decoys</span>
+</div>
+
+<div class="decoys-grid">
+  <div class="decoy-box">
+    <div class="decoy-title">admin-ssh</div>
+    <div class="decoy-port">127.0.0.1:2222 (TCP)</div>
+    <div class="decoy-desc">SSH identification parser with RFC handshake simulation. Records scanner identification string.</div>
+  </div>
+  <div class="decoy-box">
+    <div class="decoy-title">admin-http</div>
+    <div class="decoy-port">127.0.0.1:8080 (TCP)</div>
+    <div class="decoy-desc">Mock nginx/404 web server. Detects probing of administrative paths while stripping headers.</div>
+  </div>
+  <div class="decoy-box">
+    <div class="decoy-title">legacy-telnet</div>
+    <div class="decoy-port">127.0.0.1:2323 (TCP)</div>
+    <div class="decoy-desc">Virtual network appliance console. Automatically redacts authentication credentials.</div>
+  </div>
+  <div class="decoy-box">
+    <div class="decoy-title">cache-decoy</div>
+    <div class="decoy-port">127.0.0.1:6379 (TCP)</div>
+    <div class="decoy-desc">Raw Redis trap. Responds with authentication required banner, trapping automated bot traffic.</div>
+  </div>
+</div>
+
+<div class="stream-section">
+  <div class="panel">
+    <div class="panel-title">📡 Real-Time Session Ingestion</div>
+    
+    <div class="event-item">
+      <div class="event-meta">
+        <span>2026-09-08 01:44:21 UTC</span>
+        <span style="color: #58a6ff;">HTTP PROBE</span>
+      </div>
+      <div class="event-cmd">SRC: 127.0.0.1:5264 ➔ DST: 127.0.0.1:8080</div>
+      <div style="margin-top: 4px; color: #8b949e;">Method: <b style="color: #f0f6fc;">GET</b> | Path: <b style="color: #f0f6fc;">/wp-login.php</b> | Bytes: 171B</div>
+    </div>
+
+    <div class="event-item" style="border-left-color: #58a6ff;">
+      <div class="event-meta">
+        <span>2026-09-08 01:44:20 UTC</span>
+        <span style="color: #3fb950;">HEALTH CHECK</span>
+      </div>
+      <div class="event-cmd">GET /readyz ➔ 200 OK (all socket listeners online)</div>
+      <div style="margin-top: 4px; color: #8b949e;">Management probe excluded from honeypot telemetry stream.</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">📄 Structured JSONL Telemetry (v2)</div>
+    <pre><code>{
+  <span class="k">"schema_version"</span>: <span class="n">2</span>,
+  <span class="k">"session_id"</span>: <span class="s">"1ed9d0e0-d044-4845-8a38..."</span>,
+  <span class="k">"sensor"</span>: {
+    <span class="k">"id"</span>: <span class="s">"local-sensor"</span>,
+    <span class="k">"tags"</span>: { <span class="k">"site"</span>: <span class="s">"lab"</span> }
+  },
+  <span class="k">"endpoint"</span>: <span class="s">"admin-http"</span>,
+  <span class="k">"protocol"</span>: <span class="s">"http"</span>,
+  <span class="k">"src"</span>: <span class="s">"127.0.0.1:5264"</span>,
+  <span class="k">"dst_port"</span>: <span class="n">8080</span>,
+  <span class="k">"privacy_mode"</span>: <span class="s">"metadata"</span>,
+  <span class="k">"events"</span>: [{
+    <span class="k">"type"</span>: <span class="s">"http_request"</span>,
+    <span class="k">"method"</span>: <span class="s">"GET"</span>,
+    <span class="k">"path"</span>: <span class="s">"/wp-login.php"</span>
+  }]
+}</code></pre>
+  </div>
+</div>
+
+</body>
+</html>
